@@ -169,8 +169,6 @@ def main():
     splits_file.read_attempt_history(bs_Data.find_all("AttemptHistory")[0])
     # Now to read through the split history into the runs
     splits_file.read_segment_history(bs_Data.find_all("Segment"))
-    #print(type(splits_file.runs[41].segments))
-    #splits_file.runs[41].print_segments()
     splits_file.runs[41].calc_super_segments()
     splits_file.runs[41].print_super_segments()
     #for run in splits_file.runs.values():
