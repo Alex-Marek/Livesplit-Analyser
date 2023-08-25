@@ -1,5 +1,4 @@
 from bs4 import BeautifulSoup
-from collections import defaultdict
 from datetime import datetime,timedelta,time
 
 class Splits_File:
@@ -13,20 +12,16 @@ class Splits_File:
         self.uses_game_time = uses_game_time
         self.category = category
     
-
     def load_whole_file(self, xml_data):
         self.load_meta_data(xml_data)
         self.load_attempt_history(xml_data)
         self.load_segment_history(xml_data)
-        self.print_splits_summary()
-
 
     def load_meta_data(self, xml_data):
         game_name = xml_data.find("GameName")
         category_name = xml_data.find("CategoryName")
         if game_name: self.game = game_name.getText()
         if category_name: self.category = category_name.getText()
-
 
     def load_attempt_history(self, xml_data):
         results = xml_data.find_all("Attempt")
@@ -44,31 +39,37 @@ class Splits_File:
                 elif self.uses_game_time == False: time = attempt.find("RealTime")
                 else: raise ValueError
             pause_time = attempt.find("PauseTime")
-            if time:time = datetime.strptime(time.getText()[:-4], "%H:%M:%S.%f").time()
-            if pause_time: pause_time = datetime.strptime(pause_time.getText()[:-4], "%H:%M:%S.%f").time()
+            if time:
+                time = datetime.strptime(time.getText()[:-4], "%H:%M:%S.%f").time()
+            if pause_time: 
+                pause_time = datetime.strptime(pause_time.getText()[:-4], "%H:%M:%S.%f").time()
             new_attempt = Attempt(attempt_id, start_date, end_date, time, pause_time, run_completed)
 
             self.runs[attempt_id] = new_attempt
            
     def load_segment_history(self, xml_data):
         result = xml_data.find_all("Segment")
+        run_time = {}
         for split in result:
+            split_gold = None
+            is_supersplit = False
             split_name = split.find("Name").getText()
             segment_history = split.find_all("Time")
+            if split_name.find("{") != -1 and split_name.find("}") != -1: is_supersplit = True
             for attempt_information in segment_history:
-                time = None
-                attempt_id = None
+                is_gold = False
                 attempt_id = int(attempt_information.get("id"))
-                if self.uses_game_time == True:
-                    time = attempt_information.find("GameTime").getText()
-                elif self.uses_game_time == False:
-                    time = attempt_information.find("RealTime").getText()
+                if self.uses_game_time == True: time = attempt_information.find("GameTime").getText()
+                elif self.uses_game_time == False: time = attempt_information.find("RealTime").getText()
                 else: return ValueError
-                #Livesplit removes ms if exactly 0 which is CRINGE
                 if time.find(".") == -1: time += ".0000000"
                 time = datetime.strptime(time[:-4], "%H:%M:%S.%f").time()
-                self.runs[attempt_id].segments[split_name] = time
-
+                if run_time.get(attempt_id) is None: run_time[attempt_id] = time
+                else: run_time[attempt_id] = add_date_time_time(run_time[attempt_id], time)
+                if not split_gold: split_gold = time; is_gold = True
+                elif time < split_gold: split_gold = time; is_gold = True
+                new_segment = Segment(time=time, is_supersplit = is_supersplit, was_gold = is_gold, run_time = run_time[attempt_id])
+                self.runs[attempt_id].segments[split_name] = new_segment
 
     def print_splits_summary(self):
         print(f"Game: {self.game} - {self.category}\
@@ -77,13 +78,13 @@ class Splits_File:
         for value in self.runs.values():
             print(f"Attempt:{value.attempt_id} - {len(value.segments)} Maps - in {value.time}")
 
-
     def print_specific_run(self,id):
         self.runs[id].print_segments()
 
 
 class Attempt:
-    def __init__(self, attempt_id = 0, start_date_time = None, end_date_time = None, time = None, pause_time = None, run_completed = False):
+    def __init__(self, attempt_id = 0, start_date_time = None, end_date_time = None,\
+            time = None, pause_time = None, run_completed = False):
         self.attempt_id = attempt_id
         self.start_date_time = start_date_time
         self.end_date_time = end_date_time
@@ -98,19 +99,29 @@ class Attempt:
                 \n Run Time: {self.time},\n Pause Time: {self.pause_time} \n")
 
     def print_segments(self):
-        for split_name, time in self.segments.items():
-            print(f"{split_name} Completed in: {time}")
+        for split_name, segment_info in self.segments.items():
+            print(f"{split_name} \
+                    \nCompleted in: {segment_info.time}\
+                    \nrun_time: {segment_info.run_time}\
+                    \nwas_gold?: {segment_info.was_gold}\
+                    \nsuper split?: {segment_info.is_supersplit}\n")
 
 
-def main():
-    s_file = Splits_File()
-    with open("6aa1.lss", 'r') as file:
-        raw_data = file.read()
-    xml_data = BeautifulSoup(raw_data,'xml')
-    s_file.load_whole_file(xml_data)
-    s_file.print_splits_summary()
+class Segment:
+    def __init__(self, was_gold = False, time = None,\
+            run_time = None, is_supersplit = False):
+        self.was_gold = was_gold
+        self.time = time
+        self.run_time = run_time
+        self.is_supersplit = is_supersplit
 
 
-
-if __name__ == "__main__":
-    main()
+def add_date_time_time(value_one, value_two):
+    v_two = timedelta(hours=value_one.hour,minutes=value_one.minute,seconds=value_one.second,microseconds=value_one.microsecond)
+    v_one = timedelta(hours=value_two.hour,minutes=value_two.minute,seconds=value_two.second,microseconds=value_two.microsecond)
+    v_three = v_one + v_two
+    hours, remainder = divmod(v_three.total_seconds(), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    microseconds = v_three.microseconds
+    new_date_time = time(int(hours), int(minutes), int(seconds), int(microseconds))
+    return new_date_time
