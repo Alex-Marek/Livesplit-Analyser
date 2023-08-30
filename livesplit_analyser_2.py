@@ -11,6 +11,7 @@ class Splits_File:
         self.game = game
         self.uses_game_time = uses_game_time
         self.category = category
+        self.golds = []
     
     def load_whole_file(self, xml_data):
         self.load_meta_data(xml_data)
@@ -35,14 +36,14 @@ class Splits_File:
             if end_date:end_date = datetime.strptime(end_date, "%m/%d/%Y %H:%M:%S")
             if len(attempt) != 0:
                 run_completed = True
-                if self.uses_game_time == True: time = attempt.find("GameTime")
-                elif self.uses_game_time == False: time = attempt.find("RealTime")
+                if self.uses_game_time == True: time = attempt.find("GameTime").getText()
+                elif self.uses_game_time == False: time = attempt.find("RealTime").getText()
                 else: raise ValueError
             pause_time = attempt.find("PauseTime")
             if time:
-                time = datetime.strptime(time.getText()[:-4], "%H:%M:%S.%f").time()
+                time = convert_lsstime_to_time(time)
             if pause_time: 
-                pause_time = datetime.strptime(pause_time.getText()[:-4], "%H:%M:%S.%f").time()
+                pause_time = convert_lsstime_to_time(pause_time)
             new_attempt = Attempt(attempt_id, start_date, end_date, time, pause_time, run_completed)
 
             self.runs[attempt_id] = new_attempt
@@ -54,22 +55,46 @@ class Splits_File:
             split_gold = None
             is_supersplit = False
             split_name = split.find("Name").getText()
+            if split_name not in self.splits: self.splits.append(split_name)
+
+            best_time = split.find("BestSegmentTime")
+            if best_time is not None: 
+                if self.uses_game_time: best_segment = best_time.find("GameTime").getText()
+                elif not self.uses_game_time:best_segment = best_time.find("RealTime").getText()
+                best_segment = convert_lsstime_to_time(best_segment)
+                self.golds.append(best_segment)
+
             segment_history = split.find_all("Time")
-            if split_name.find("{") != -1 and split_name.find("}") != -1: is_supersplit = True
+            if split_name.find("{") != -1 and split_name.find("}") != -1: 
+                is_supersplit = True
+                self.uses_subsplits = True
             for attempt_information in segment_history:
                 is_gold = False
                 attempt_id = int(attempt_information.get("id"))
+
                 if self.uses_game_time == True: time = attempt_information.find("GameTime").getText()
                 elif self.uses_game_time == False: time = attempt_information.find("RealTime").getText()
                 else: return ValueError
-                if time.find(".") == -1: time += ".0000000"
-                time = datetime.strptime(time[:-4], "%H:%M:%S.%f").time()
+
+                time = convert_lsstime_to_time(time)
+
                 if run_time.get(attempt_id) is None: run_time[attempt_id] = time
                 else: run_time[attempt_id] = add_date_time_time(run_time[attempt_id], time)
+                    
                 if not split_gold: split_gold = time; is_gold = True
                 elif time < split_gold: split_gold = time; is_gold = True
-                new_segment = Segment(time=time, is_supersplit = is_supersplit, was_gold = is_gold, run_time = run_time[attempt_id])
+
+                new_segment = Segment(time=time, is_supersplit = is_supersplit,\
+                                      was_gold = is_gold, run_time = run_time[attempt_id])
+
                 self.runs[attempt_id].segments[split_name] = new_segment
+
+    def get_golds(self) -> list:
+        golds_list = []
+        for value in self.golds:
+            new_value = prettify_time(str(value))
+            golds_list.append(new_value)
+        return golds_list
 
     def print_splits_summary(self):
         print(f"Game: {self.game} - {self.category}\
@@ -92,6 +117,20 @@ class Attempt:
         self.time = time
         self.run_completed = run_completed
         self.segments = {}
+
+    def get_run_time(self) -> str:
+        if self.time is None: return ""
+        run_time_str = str(self.time)
+        run_time_str = prettify_time(run_time_str)
+        return self.time
+
+    def get_segment_times(self) -> list:
+        new_list = []
+        for segment in self.segments.values(): 
+            segment_time = str(segment.time)
+            segment_time = prettify_time(segment_time)
+            new_list.append(segment_time)
+        return new_list
 
     def print_attempt_summary(self):
         print(f" ID: {self.attempt_id},\n Start Date: {self.start_date_time},\
@@ -116,7 +155,21 @@ class Segment:
         self.is_supersplit = is_supersplit
 
 
-def add_date_time_time(value_one, value_two):
+def convert_lsstime_to_time(time:str) -> time:
+    if time.find(".") == -1: time += ".0000000"
+    time = datetime.strptime(time[:-4], "%H:%M:%S.%f").time()
+    return time
+
+def prettify_time(time:str) -> str:
+    time = time.lstrip('0').lstrip(':')
+    if time.find('.') > -1:
+        time = time[:-3]
+    elif time.find('.') == -1:
+        time = time + ".000"
+    return time
+
+
+def add_date_time_time(value_one : time, value_two : time) -> time: 
     v_two = timedelta(hours=value_one.hour,minutes=value_one.minute,seconds=value_one.second,microseconds=value_one.microsecond)
     v_one = timedelta(hours=value_two.hour,minutes=value_two.minute,seconds=value_two.second,microseconds=value_two.microsecond)
     v_three = v_one + v_two
